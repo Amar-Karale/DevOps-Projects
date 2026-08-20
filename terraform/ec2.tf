@@ -11,7 +11,7 @@ resource "aws_security_group" "allow_user_to_connect" {
   vpc_id      = aws_default_vpc.default.id
 
   ingress {
-    description = "SSH"
+    description = "SSH for administration; restrict var.ssh_cidr_blocks to your trusted IPs"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -47,11 +47,11 @@ resource "aws_security_group" "allow_user_to_connect" {
 }
 
 resource "aws_instance" "testinstance" {
-  ami           = var.ami_id
-  instance_type = var.instance_type
-  key_name      = aws_key_pair.deployer.key_name
-
-  security_groups = [aws_security_group.allow_user_to_connect.name]
+  ami                    = var.ami_id
+  instance_type          = var.instance_type
+  key_name               = aws_key_pair.deployer.key_name
+  iam_instance_profile   = aws_iam_instance_profile.wanderlust_ec2.name
+  vpc_security_group_ids = [aws_security_group.allow_user_to_connect.id]
 
   tags = {
     Name = "Wanderlust"
@@ -60,5 +60,6 @@ resource "aws_instance" "testinstance" {
   root_block_device {
     volume_size = 30
     volume_type = "gp3"
+    encrypted   = true
   }
 }
