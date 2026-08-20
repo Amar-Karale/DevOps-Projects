@@ -12,15 +12,18 @@ spec:
       app: backend
   template:
     metadata:
-      name: backend
       labels:
         app: backend
     spec:
       containers:
         - name: backend
-          image: thatgeekcontainer/wanderlust-backend-beta:v5
+          image: amarkarale/wanderlust-backend-beta:v5
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: backend-env
 ---
 apiVersion: v1
 kind: Service
