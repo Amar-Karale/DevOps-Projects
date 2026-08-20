@@ -11,7 +11,7 @@ spec:
     path: kubernetes
   destination:
     name: wanderlust
-    namespace: default
+    namespace: wanderlust
   syncPolicy:
     automated:
       prune: true
