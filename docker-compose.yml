@@ -1,10 +1,11 @@
 version: "3.8"
+
 services:
   mongodb:
     container_name: mongo-service
-    image: mongo:latest
+    image: mongo:7
     volumes:
-      - ./backend/data:/data
+      - ./backend/data:/data/db
     ports:
       - "27017:27017"
 
@@ -17,6 +18,7 @@ services:
       - "31100:8080"
     depends_on:
       - mongodb
+      - redis
 
   frontend:
     container_name: frontend
@@ -24,16 +26,16 @@ services:
     env_file:
       - ./frontend/.env.docker
     ports:
-      - "5173:5173"
+      - "5173:8080"
+    depends_on:
+      - backend
 
   redis:
     container_name: redis-service
     restart: unless-stopped
-    image: redis:7.0.5-alpine 
+    image: redis:7.0.5-alpine
     expose:
-        - 6379
-    depends_on:
-      - mongodb
+      - 6379
 
 volumes:
   data:
