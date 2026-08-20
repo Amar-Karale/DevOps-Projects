@@ -10,14 +10,15 @@ pipeline {
     parameters {
         string(name: 'FRONTEND_DOCKER_TAG', defaultValue: '', description: 'Docker image tag for frontend')
         string(name: 'BACKEND_DOCKER_TAG', defaultValue: '', description: 'Docker image tag for backend')
+        string(name: 'VITE_API_PATH', defaultValue: '', description: 'Public backend API URL, for example http://host:31100')
     }
 
     stages {
         stage('Validate Parameters') {
             steps {
                 script {
-                    if (!params.FRONTEND_DOCKER_TAG?.trim() || !params.BACKEND_DOCKER_TAG?.trim()) {
-                        error('FRONTEND_DOCKER_TAG and BACKEND_DOCKER_TAG must be provided.')
+                    if (!params.FRONTEND_DOCKER_TAG?.trim() || !params.BACKEND_DOCKER_TAG?.trim() || !params.VITE_API_PATH?.trim()) {
+                        error('FRONTEND_DOCKER_TAG, BACKEND_DOCKER_TAG and VITE_API_PATH must be provided.')
                     }
                 }
             }
@@ -47,21 +48,10 @@ pipeline {
             steps { script { sonarqube_code_quality() } }
         }
 
-        stage('Exporting Environment Variables') {
-            parallel {
-                stage('Backend Env Setup') {
-                    steps {
-                        dir('Automations') {
-                            sh 'bash updatebackendnew.sh'
-                        }
-                    }
-                }
-                stage('Frontend Env Setup') {
-                    steps {
-                        dir('Automations') {
-                            sh 'bash updatefrontendnew.sh'
-                        }
-                    }
+        stage('Configure Frontend Build') {
+            steps {
+                dir('frontend') {
+                    sh 'printf "VITE_API_PATH=\\\"%s\\\"\\n" "$VITE_API_PATH" > .env.docker'
                 }
             }
         }
