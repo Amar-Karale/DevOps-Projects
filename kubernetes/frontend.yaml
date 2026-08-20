@@ -12,13 +12,13 @@ spec:
       app: frontend
   template:
     metadata:
-      name: frontend
       labels:
         app: frontend
     spec:
       containers:
         - name: frontend
-          image: thatgeekcontainer/wanderlust-frontend-beta:v5
+          image: amarkarale/wanderlust-frontend-beta:v5
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5173
 ---
