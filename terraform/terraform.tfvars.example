@@ -1,0 +1,12 @@
+aws_region                  = "us-west-1"
+ami_id                      = "ami-REPLACE_ME"
+instance_type               = "t2.large"
+key_name                    = "REPLACE_ME"
+public_key                  = "ssh-rsa REPLACE_ME"
+ssh_cidr_blocks             = ["YOUR.PUBLIC.IP.ADDRESS/32"]
+enable_cloudwatch           = true
+cloudwatch_log_retention_days = 30
+enable_cloudfront           = false
+cloudfront_origin_domain_name = ""
+cloudfront_aliases          = []
+cloudfront_price_class      = "PriceClass_100"
