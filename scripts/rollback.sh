@@ -6,9 +6,7 @@ DEPLOYMENT="${2:-backend-deployment}"
 REVISION="${3:-}"
 
 echo "Rollback target: namespace=${NAMESPACE}, deployment=${DEPLOYMENT}"
-
 echo
-grep_command='kubectl -n "${NAMESPACE}" rollout history deployment/${DEPLOYMENT}'
 echo "Available rollout history:"
 kubectl -n "$NAMESPACE" rollout history "deployment/${DEPLOYMENT}"
 
