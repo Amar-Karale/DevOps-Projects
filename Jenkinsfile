@@ -4,20 +4,23 @@ pipeline {
     agent { label 'spy' }
 
     environment {
-        SONAR_HOME = tool 'Sonar'
+        SONAR_HOME      = tool 'Sonar'
+        TRIVY_EXIT_CODE = '0' // Change to 1 to make HIGH/CRITICAL findings fail the build.
     }
 
     parameters {
         string(name: 'FRONTEND_DOCKER_TAG', defaultValue: '', description: 'Docker image tag for frontend')
         string(name: 'BACKEND_DOCKER_TAG', defaultValue: '', description: 'Docker image tag for backend')
-        string(name: 'VITE_API_PATH', defaultValue: '', description: 'Public backend API URL, for example http://host:31100')
+        string(name: 'VITE_API_PATH', defaultValue: '', description: 'Public backend API URL')
     }
 
     stages {
         stage('Validate Parameters') {
             steps {
                 script {
-                    if (!params.FRONTEND_DOCKER_TAG?.trim() || !params.BACKEND_DOCKER_TAG?.trim() || !params.VITE_API_PATH?.trim()) {
+                    if (!params.FRONTEND_DOCKER_TAG?.trim() ||
+                        !params.BACKEND_DOCKER_TAG?.trim() ||
+                        !params.VITE_API_PATH?.trim()) {
                         error('FRONTEND_DOCKER_TAG, BACKEND_DOCKER_TAG and VITE_API_PATH must be provided.')
                     }
                 }
@@ -33,6 +36,20 @@ pipeline {
                 script {
                     code_checkout('https://github.com/Amar-Karale/DevOps-Projects.git', 'master')
                 }
+            }
+        }
+
+        stage('Trivy: Filesystem Scan') {
+            steps {
+                sh '''
+                    set -e
+                    trivy fs \
+                      --scanners vuln,misconfig,secret \
+                      --severity HIGH,CRITICAL \
+                      --ignore-unfixed \
+                      --exit-code "$TRIVY_EXIT_CODE" \
+                      .
+                '''
             }
         }
 
@@ -66,6 +83,27 @@ pipeline {
                         docker_build('wanderlust-frontend-beta', params.FRONTEND_DOCKER_TAG, 'amarkarale')
                     }
                 }
+            }
+        }
+
+        stage('Trivy: Container Image Scan') {
+            steps {
+                sh """
+                    set -e
+                    trivy image \\
+                      --scanners vuln,misconfig,secret \\
+                      --severity HIGH,CRITICAL \\
+                      --ignore-unfixed \\
+                      --exit-code ${TRIVY_EXIT_CODE} \\
+                      amarkarale/wanderlust-backend-beta:${params.BACKEND_DOCKER_TAG}
+
+                    trivy image \\
+                      --scanners vuln,misconfig,secret \\
+                      --severity HIGH,CRITICAL \\
+                      --ignore-unfixed \\
+                      --exit-code ${TRIVY_EXIT_CODE} \\
+                      amarkarale/wanderlust-frontend-beta:${params.FRONTEND_DOCKER_TAG}
+                """
             }
         }
 
