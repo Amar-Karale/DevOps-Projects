@@ -6,6 +6,9 @@
 **/.env.*
 !**/.env.example
 
+# Kubernetes local secret manifests
+kubernetes/secrets/backend-env.yaml
+
 # Node.js
 node_modules/
 npm-debug.log*
