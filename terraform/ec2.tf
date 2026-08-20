@@ -1,34 +1,25 @@
 resource "aws_key_pair" "deployer" {
-  key_name   = "terra-automate-key"
-  public_key = file("/Users/shubham/Documents/work/TrainWithShubham/terra-practice/terra-key.pub")
+  key_name   = var.key_name
+  public_key = var.public_key
 }
 
-resource "aws_default_vpc" "default" {
-
-}
+resource "aws_default_vpc" "default" {}
 
 resource "aws_security_group" "allow_user_to_connect" {
-  name        = "allow TLS"
-  description = "Allow user to connect"
+  name        = "allow-wanderlust"
+  description = "Allow required application traffic"
   vpc_id      = aws_default_vpc.default.id
+
   ingress {
-    description = "port 22 allow"
+    description = "SSH"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    description = " allow all outgoing traffic "
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.ssh_cidr_blocks
   }
 
   ingress {
-    description = "port 80 allow"
+    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -36,28 +27,38 @@ resource "aws_security_group" "allow_user_to_connect" {
   }
 
   ingress {
-    description = "port 443 allow"
+    description = "HTTPS"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   tags = {
-    Name = "mysecurity"
+    Name = "wanderlust"
   }
 }
 
 resource "aws_instance" "testinstance" {
-  ami             = var.ami_id
-  instance_type   = var.instance_type
-  key_name        = aws_key_pair.deployer.key_name
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  key_name      = aws_key_pair.deployer.key_name
+
   security_groups = [aws_security_group.allow_user_to_connect.name]
+
   tags = {
-    Name = "Automate"
+    Name = "Wanderlust"
   }
+
   root_block_device {
-    volume_size = 30 
+    volume_size = 30
     volume_type = "gp3"
   }
 }
