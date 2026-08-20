@@ -1,14 +1,10 @@
 # Kubernetes Deployment Guide — Wanderlust
 
-This directory contains the Kubernetes desired state for the Wanderlust application.
+This directory contains the Kubernetes desired state for the Wanderlust application. Argo CD consumes these manifests after the CI/GitOps pipeline promotes new Docker image tags.
 
-The manifests are intended to be consumed by **Argo CD** after the CI/GitOps pipeline promotes new Docker image tags.
+The manifests are designed around namespace isolation, controlled rolling updates, rollback history, non-root containers, resource limits, health probes, externalized secrets, and an AWS LoadBalancer frontend for the optional CloudFront edge layer.
 
-> The screenshots in `kubernetes/assets/` document the implementation. Runtime credentials, cluster-specific values, and public endpoints are intentionally not committed to Git.
-
----
-
-## 📦 Kubernetes resources
+## 1. Resources
 
 ```text
 namespace.yaml
@@ -18,58 +14,132 @@ mongodb.yaml
 redis.yaml
 backend.yaml
 frontend.yaml
+secrets/
+  backend-env.example.yaml
+  README.md
 ```
 
 | Manifest | Purpose |
 |---|---|
 | `namespace.yaml` | Creates the `wanderlust` namespace |
-| `persistentVolume.yaml` | Defines persistent storage for MongoDB |
-| `persistentVolumeClaim.yaml` | Requests MongoDB storage |
-| `mongodb.yaml` | MongoDB deployment and service |
-| `redis.yaml` | Redis deployment and service |
-| `backend.yaml` | Node.js API deployment and service |
-| `frontend.yaml` | React frontend deployment and service |
+| `persistentVolume.yaml` | MongoDB persistent storage |
+| `persistentVolumeClaim.yaml` | MongoDB storage claim |
+| `mongodb.yaml` | MongoDB deployment/service |
+| `redis.yaml` | Redis deployment/service |
+| `backend.yaml` | Node.js backend deployment/service |
+| `frontend.yaml` | Production frontend deployment + AWS LoadBalancer service |
+| `secrets/backend-env.example.yaml` | Safe secret template only |
 
----
-
-## 🔗 Application service flow
+## 2. Service flow
 
 ```text
-Frontend
+Browser
    │
-   └── backend-service:8080
-             │
-             ├── mongo-service:27017
-             │
-             └── redis-service:6379
+   ├── Frontend LoadBalancer:80
+   │       │
+   │       └── Frontend Pods:8080
+   │
+   └── Backend API:31100
+           │
+           ├── mongo-service:27017
+           └── redis-service:6379
 ```
 
-All application resources belong to the `wanderlust` namespace.
+The frontend is served by an unprivileged Nginx container on port `8080` internally. The Kubernetes Service exposes port `80` through an AWS LoadBalancer.
 
----
+The backend remains on a NodePort (`31100`) because the frontend application makes browser-side API requests to the backend endpoint.
 
-## 🏷️ Container images
+## 3. Runtime secrets
 
-The CI pipeline publishes:
+Real secrets are never committed to Git.
+
+Template:
+
+```text
+kubernetes/secrets/backend-env.example.yaml
+```
+
+Create the real secret locally or through your secret-management platform:
+
+```bash
+cp kubernetes/secrets/backend-env.example.yaml kubernetes/secrets/backend-env.yaml
+```
+
+Edit the values and apply:
+
+```bash
+kubectl apply -f kubernetes/secrets/backend-env.yaml
+```
+
+Verify only the metadata:
+
+```bash
+kubectl -n wanderlust get secret backend-env
+```
+
+The live secret file is ignored by `.gitignore`.
+
+For AWS production environments, use AWS Secrets Manager + External Secrets Operator as the preferred next step.
+
+## 4. Backend deployment hardening
+
+`backend.yaml` uses:
+
+- 2 replicas
+- `RollingUpdate`
+- `maxUnavailable: 0`
+- `maxSurge: 1`
+- `revisionHistoryLimit: 5`
+- non-root execution
+- privilege escalation disabled
+- all Linux capabilities dropped
+- `seccompProfile: RuntimeDefault`
+- resource requests/limits
+- readiness probe
+- liveness probe
+
+This provides controlled rollouts and preserves previous ReplicaSet revisions for rollback.
+
+## 5. Frontend deployment hardening
+
+`frontend.yaml` uses:
+
+- 2 replicas
+- `RollingUpdate`
+- `maxUnavailable: 0`
+- `maxSurge: 1`
+- `revisionHistoryLimit: 5`
+- non-root execution
+- privilege escalation disabled
+- all Linux capabilities dropped
+- `seccompProfile: RuntimeDefault`
+- resource requests/limits
+- readiness probe
+- liveness probe
+- AWS `LoadBalancer` service
+
+The AWS LoadBalancer is the origin used by the optional CloudFront configuration under `aws/cloudfront/` and `terraform/cloudfront.tf`.
+
+## 6. Image versions
+
+CI publishes:
 
 ```text
 amarkarale/wanderlust-backend-beta:<tag>
 amarkarale/wanderlust-frontend-beta:<tag>
 ```
 
-The GitOps pipeline updates `backend.yaml` and `frontend.yaml` with the exact tags produced by CI.
+GitOps updates `backend.yaml` and `frontend.yaml` to the exact CI-generated tags before Argo CD reconciles the cluster.
 
----
+## 7. Argo CD
 
-## 🚀 Argo CD
-
-The repository contains the Argo CD Application definition at:
+The Argo CD Application definition is:
 
 ```text
 ../argocd/application.yaml
 ```
 
-The application watches:
+Source:
 
 ```text
 Repository: https://github.com/Amar-Karale/DevOps-Projects.git
@@ -78,122 +148,152 @@ Path: kubernetes
 Namespace: wanderlust
 ```
 
-The configured sync policy enables automated synchronization, pruning, and self-healing.
+The desired behavior is:
 
-For a new cluster, register the cluster with Argo CD and apply the Application definition from the repository.
-
----
-
-## 🔐 Runtime configuration
-
-Secrets are **not stored in Git**.
-
-For a new deployment, create the backend runtime secret from your secure environment. Example structure:
-
-```bash
-kubectl create secret generic backend-env \
-  -n wanderlust \
-  --from-literal=MONGODB_URI='mongodb://mongo-service/wanderlust' \
-  --from-literal=REDIS_URL='redis://redis-service:6379' \
-  --from-literal=PORT='8080' \
-  --from-literal=FRONTEND_URL='http://<frontend-host>:31000' \
-  --from-literal=ACCESS_COOKIE_MAXAGE='120000' \
-  --from-literal=ACCESS_TOKEN_EXPIRES_IN='120s' \
-  --from-literal=REFRESH_COOKIE_MAXAGE='120000' \
-  --from-literal=REFRESH_TOKEN_EXPIRES_IN='120s' \
-  --from-literal=JWT_SECRET='<generate-a-new-random-secret>' \
-  --from-literal=NODE_ENV='production'
+```text
+Git change
+    ↓
+Argo CD detects change
+    ↓
+Sync
+    ↓
+RollingUpdate
+    ↓
+Healthy application
 ```
 
-Use your own secure values when rebuilding the project.
+Automated sync, prune, self-heal, and namespace creation are configured in the Argo CD Application.
 
----
+## 8. Deploying the application manually
 
-## 🧱 Persistent storage
-
-MongoDB uses a PersistentVolume and PersistentVolumeClaim. Review the storage class and volume settings before deploying to a different EKS environment.
-
----
-
-## 🧪 Verification
+For a clean environment where the Argo CD Application is already configured:
 
 ```bash
+kubectl apply -f kubernetes/namespace.yaml
+kubectl apply -f kubernetes/persistentVolume.yaml
+kubectl apply -f kubernetes/persistentVolumeClaim.yaml
+kubectl apply -f kubernetes/mongodb.yaml
+kubectl apply -f kubernetes/redis.yaml
+kubectl apply -f kubernetes/secrets/backend-env.yaml
+kubectl apply -f kubernetes/backend.yaml
+kubectl apply -f kubernetes/frontend.yaml
+```
+
+For the intended GitOps workflow, let Argo CD apply these manifests instead of manually applying them on every release.
+
+## 9. Verification
+
+```bash
+kubectl get nodes
 kubectl get pods -n wanderlust
-kubectl get svc -n wanderlust
 kubectl get deployments -n wanderlust
+kubectl get svc -n wanderlust
 kubectl get pvc -n wanderlust
 ```
 
-For logs and troubleshooting:
+Check the frontend load balancer:
 
 ```bash
-kubectl logs <pod-name> -n wanderlust
-kubectl describe pod <pod-name> -n wanderlust
+kubectl -n wanderlust get svc frontend-service
 ```
 
-For Argo CD:
+Check backend rollout:
+
+```bash
+kubectl -n wanderlust rollout status deployment/backend-deployment
+```
+
+Check frontend rollout:
+
+```bash
+kubectl -n wanderlust rollout status deployment/frontend-deployment
+```
+
+Argo CD:
 
 ```bash
 argocd app get wanderlust
-argocd app sync wanderlust
 ```
 
----
+## 10. Rollback
 
-## 📸 Deployment screenshots
+View history:
 
-### Cluster and namespace
+```bash
+kubectl -n wanderlust rollout history deployment/backend-deployment
+kubectl -n wanderlust rollout history deployment/frontend-deployment
+```
 
-![Nodes](assets/nodes.png)
+Rollback one revision:
 
-![Namespace](assets/namespace%20create.png)
+```bash
+kubectl -n wanderlust rollout undo deployment/backend-deployment
+```
 
-![Kubernetes context](assets/context%20wanderlust.png)
+Or use the repository helper:
 
-### DNS and cluster preparation
+```bash
+./scripts/rollback.sh wanderlust backend-deployment
+```
 
-![CoreDNS](assets/get-coredns.png)
+Specific revision:
 
-![CoreDNS replica configuration](assets/edit-coredns.png)
+```bash
+./scripts/rollback.sh wanderlust backend-deployment 3
+```
 
-### Storage and data services
+For GitOps, the preferred controlled rollback is a Git revert of the bad image-tag commit, followed by Argo CD reconciliation.
 
-![Persistent volume](assets/pv.png)
+## 11. CloudFront integration
 
-![Persistent volume claim](assets/pvc.png)
+The frontend service intentionally uses `type: LoadBalancer`.
 
-![MongoDB](assets/mongo.png)
+After deployment:
 
-![Redis](assets/redis.png)
+```bash
+kubectl -n wanderlust get svc frontend-service
+```
 
-### Docker and environment preparation
+Copy the AWS load balancer DNS name into Terraform:
 
-![Backend environment reference](assets/backend.env.docker.png)
+```hcl
+enable_cloudfront             = true
+cloudfront_origin_domain_name = "YOUR-FRONTEND-LB-DNS"
+```
 
-![Frontend environment reference](assets/frontend.env.docker.png)
+Then create the optional CloudFront + WAF edge layer through Terraform.
 
-![Backend Docker build](assets/docker%20backend%20build.png)
+## 12. Monitoring
 
-![Frontend Docker build](assets/docker%20frontend%20build.png)
+The application is monitored through:
 
-![Docker images](assets/docker%20images.png)
+- Prometheus
+- Grafana
+- Node Exporter
+- kube-state-metrics
+- Alertmanager
 
-![Docker login](assets/docker%20login.png)
+AWS-native monitoring is documented in:
 
-### Application workloads
+```text
+../monitoring/cloudwatch/README.md
+```
 
-![Backend](assets/backend.png)
+That guide uses the Amazon CloudWatch Observability EKS add-on for CloudWatch Agent, Fluent Bit, and Container Insights.
 
-![Frontend](assets/frontend.png)
+## 13. Screenshots
 
-![All workloads](assets/all-deps.png)
+The `assets/` directory contains implementation screenshots for:
 
-![Application](assets/app.png)
+- EKS nodes
+- namespace
+- Kubernetes context
+- CoreDNS
+- persistent storage
+- MongoDB
+- Redis
+- Docker builds and images
+- application workloads
+- application output
 
----
-
-## 📝 Rebuild notes
-
-This guide is written so another engineer can understand and recreate the deployment without access to the original infrastructure.
-
-Replace all environment-specific values with your own AWS account, EKS cluster, Docker Hub images, DNS/load-balancer endpoints, and secrets.
+These assets document the original implementation and are not substitutes for environment-specific configuration.
