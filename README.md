@@ -1,6 +1,6 @@
 # Wanderlust — DevSecOps, GitOps & Cloud-Native Delivery on AWS
 
-> **Internship project:** This project was designed, implemented, tested, documented, and evolved by me over a 9-month internship period. It is the project I use to demonstrate practical work across AWS, Jenkins, Docker, Kubernetes, EKS, Argo CD, Terraform, security, observability, and production-oriented deployment practices.
+> **Project:** This project was designed, implemented, tested, documented, and evolved by me. It is the project I use to demonstrate practical work across AWS, Jenkins, Docker, Kubernetes, EKS, Argo CD, Terraform, security, observability, and production-oriented deployment practices.
 
 Wanderlust is a full-stack application delivered through a complete DevSecOps + GitOps workflow:
 
@@ -1057,9 +1057,9 @@ These assets are retained as implementation evidence and learning documentation.
 
 ---
 
-# 24. Internship learning outcomes
+# 24. Project learning outcomes
 
-During the 9-month internship period, this project gave me hands-on exposure to:
+This project gave me hands-on exposure to:
 
 - designing CI/CD pipelines
 - Jenkins pipeline troubleshooting
@@ -1153,7 +1153,7 @@ Rollback
 
 **Amar Karale**
 
-Cloud / DevOps Engineering project developed during my internship and maintained as a portfolio implementation.
+Cloud / DevOps Engineering project developed and maintained as a portfolio implementation.
 
 **Repository:** https://github.com/Amar-Karale/DevOps-Projects
 
