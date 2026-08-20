@@ -1,125 +1,172 @@
 @Library('Shared') _
+
 pipeline {
-    agent {label 'akbagent'}
-    
+    agent { label 'spy' }
+
+    environment {
+        SONAR_HOME = tool "Sonar"
+    }
+
     parameters {
-        string(name: 'FRONTEND_DOCKER_TAG', defaultValue: '', description: 'Frontend Docker tag of the image built by the CI job')
-        string(name: 'BACKEND_DOCKER_TAG', defaultValue: '', description: 'Backend Docker tag of the image built by the CI job')
+        string(
+            name: 'FRONTEND_DOCKER_TAG',
+            defaultValue: '',
+            description: 'Docker image tag for frontend'
+        )
+        string(
+            name: 'BACKEND_DOCKER_TAG',
+            defaultValue: '',
+            description: 'Docker image tag for backend'
+        )
     }
 
     stages {
-        stage("Workspace cleanup"){
-            steps{
-                script{
-                    cleanWs()
-                }
-            }
-        }
-        
-        stage('Git: Code Checkout') {
+
+        stage("Validate Parameters") {
             steps {
-                script{
-                    code_checkout("https://github.com/NotHarshhaa/DevOps-Projects/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS","master")
+                script {
+                    if (
+                        params.FRONTEND_DOCKER_TAG?.trim() == '' ||
+                        params.BACKEND_DOCKER_TAG?.trim() == ''
+                    ) {
+                        error("FRONTEND_DOCKER_TAG and BACKEND_DOCKER_TAG must be provided.")
+                    }
                 }
             }
         }
-        
-        stage('Verify: Docker Image Tags') {
+
+        stage("Workspace Cleanup") {
             steps {
-                script{
-                    echo "FRONTEND_DOCKER_TAG: ${params.FRONTEND_DOCKER_TAG}"
-                    echo "BACKEND_DOCKER_TAG: ${params.BACKEND_DOCKER_TAG}"
+                cleanWs()
+            }
+        }
+
+        stage("Git: Code Checkout") {
+            steps {
+                script {
+                    code_checkout(
+                        "https://github.com/Amar-Karale/DevOps-Projects.git",
+                        "master"
+                    )
                 }
             }
         }
-        
-        
-        stage("Update: Kubernetes manifests"){
-            steps{
-                script{
-                    dir('kubernetes'){
+
+        stage("OWASP: Dependency Check") {
+            steps {
+                script {
+                    owasp_dependency()
+                }
+            }
+        }
+
+        stage("SonarQube: Code Analysis") {
+            steps {
+                script {
+                    sonarqube_analysis(
+                        "Sonar",
+                        "wanderlust",
+                        "wanderlust"
+                    )
+                }
+            }
+        }
+
+        stage("SonarQube: Code Quality Gates") {
+            steps {
+                script {
+                    sonarqube_code_quality()
+                }
+            }
+        }
+
+        stage("Exporting Environment Variables") {
+            parallel {
+
+                stage("Backend Env Setup") {
+                    steps {
+                        dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/Automations") {
+                            sh "bash updatebackendnew.sh"
+                        }
+                    }
+                }
+
+                stage("Frontend Env Setup") {
+                    steps {
+                        dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/Automations") {
+                            sh "bash updatefrontendnew.sh"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage("Docker: Build Images") {
+            steps {
+                script {
+
+                    dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/backend") {
                         sh """
-                            sed -i -e 's|image: .*|image: thatgeekcontainer/wanderlust-backend-beta:${params.BACKEND_DOCKER_TAG}|g' backend.yaml
+                            docker build \
+                              -t amarkarale/wanderlust-backend-beta:${params.BACKEND_DOCKER_TAG} \
+                              .
                         """
                     }
-                    
-                    dir('kubernetes'){
+
+                    dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/frontend") {
                         sh """
-                            sed -i -e 's|image: .*|image: thatgeekcontainer/wanderlust-frontend-beta:${params.FRONTEND_DOCKER_TAG}|g' frontend.yaml
+                            docker build \
+                              -t amarkarale/wanderlust-frontend-beta:${params.FRONTEND_DOCKER_TAG} \
+                              .
                         """
                     }
-                    
                 }
             }
         }
-        
-        stage("Git: Code update and push to GitHub"){
-            steps{
-                script{
-                    withCredentials([gitUsernamePassword(credentialsId: 'github-cred', gitToolName: 'Default')]) {
-                        sh '''
-                        echo "Checking repository status: "
-                        git status
-                    
-                        echo "Adding changes to git: "
-                        git add .
-                        
-                        echo "Commiting changes: "
-                        git commit -m "Updated environment variables"
-                        
-                        echo "Pushing changes to github: "
-                        git push https://github.com/NotHarshhaa/DevOps-Projects/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS master
+
+        stage("Docker: Push to DockerHub") {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        echo "$DOCKER_PASS" | docker login                             --username "$DOCKER_USER"                             --password-stdin
+
+                        docker push "amarkarale/wanderlust-backend-beta:${BACKEND_DOCKER_TAG}"
+                        docker push "amarkarale/wanderlust-frontend-beta:${FRONTEND_DOCKER_TAG}"
+
+                        docker logout
                     '''
-                    }
                 }
             }
         }
     }
-  post {
+
+    post {
         success {
-            script {
-                emailext attachLog: true,
-                from: 'prodevopsguytech@gmail.com',
-                subject: "Wanderlust Application has been updated and deployed - '${currentBuild.result}'",
-                body: """
-                    <html>
-                    <body>
-                        <div style="background-color: #FFA07A; padding: 10px; margin-bottom: 10px;">
-                            <p style="color: black; font-weight: bold;">Project: ${env.JOB_NAME}</p>
-                        </div>
-                        <div style="background-color: #90EE90; padding: 10px; margin-bottom: 10px;">
-                            <p style="color: black; font-weight: bold;">Build Number: ${env.BUILD_NUMBER}</p>
-                        </div>
-                        <div style="background-color: #87CEEB; padding: 10px; margin-bottom: 10px;">
-                            <p style="color: black; font-weight: bold;">URL: ${env.BUILD_URL}</p>
-                        </div>
-                    </body>
-                    </html>
-            """,
-            to: 'prodevopsguytech@gmail.com',
-            mimeType: 'text/html'
-            }
-        }
-      failure {
-            script {
-                emailext attachLog: true,
-                from: 'prodevopsguytech@gmail.com',
-                subject: "Wanderlust Application build failed - '${currentBuild.result}'",
-                body: """
-                    <html>
-                    <body>
-                        <div style="background-color: #FFA07A; padding: 10px; margin-bottom: 10px;">
-                            <p style="color: black; font-weight: bold;">Project: ${env.JOB_NAME}</p>
-                        </div>
-                        <div style="background-color: #90EE90; padding: 10px; margin-bottom: 10px;">
-                            <p style="color: black; font-weight: bold;">Build Number: ${env.BUILD_NUMBER}</p>
-                        </div>
-                    </body>
-                    </html>
-            """,
-            to: 'prodevopsguytech@gmail.com',
-            mimeType: 'text/html'
-            }
+
+            archiveArtifacts(
+                artifacts: '*.xml',
+                followSymlinks: false
+            )
+
+            build job: "Wanderlust-CD",
+                parameters: [
+                    string(
+                        name: 'FRONTEND_DOCKER_TAG',
+                        value: "${params.FRONTEND_DOCKER_TAG}"
+                    ),
+                    string(
+                        name: 'BACKEND_DOCKER_TAG',
+                        value: "${params.BACKEND_DOCKER_TAG}"
+                    )
+                ]
         }
     }
 }
