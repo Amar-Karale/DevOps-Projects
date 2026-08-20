@@ -1,192 +1,77 @@
-# Wanderlust Deployment on Kubernetes
+# Wanderlust Kubernetes Deployment
 
-### In this project, we will learn about how to deploy wanderlust application on Kubernetes.
+This directory contains the Kubernetes manifests used by Argo CD.
 
-### Pre-requisites to implement this project:
--  Create 2 AWS EC2 instance (Ubuntu) with instance type t2.medium and root volume 29GB.
--  Setup <a href="https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/kubeadm.md"><u> Kubeadm </a></u>
+## Prerequisites
 
-#
-## Steps for Kubernetes deployment:
+- An EKS cluster registered in Argo CD as `wanderlust`.
+- DockerHub images published as `amarkarale/wanderlust-backend-beta:<tag>` and `amarkarale/wanderlust-frontend-beta:<tag>`.
+- `kubectl` configured for the target EKS cluster.
 
-1) Become root user :
-```bash
-sudo su
-```
+## 1. Create the namespace
 
-#
-2) Clone code from remote repository (GitHub) :
-```bash
-git clone -b devops https://github.com/DevMadhup/wanderlust.git
-```
-
-#
-3) Verify nodes are in ready state or not :
-```bash
-kubectl get nodes
-```
-![Alt text](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/nodes.png)
-
-#
-4) Create kubernetes namespace :
-```bash
-kubectl create namespace wanderlust
-```
-![Namespace](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/namespace%20create.png)
-
-#
-5) Update kubernetes config context : 
-```bash
-kubectl config set-context --current --namespace wanderlust
-```
-![Update context](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/context%20wanderlust.png)
-
-#
-6) Enable DNS resolution on kubernetes cluster :
-
-- Check coredns pod in kube-system namespace and you will find <i> Both coredns pods are running on master node </i>
+The repository includes `namespace.yaml`:
 
 ```bash
-kubectl get pods -n kube-system -o wide | grep -i core
+kubectl apply -f namespace.yaml
 ```
-![Alt text](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/get-coredns.png)
 
-- Above step will run coredns pod on worker node as well for DNS resolution
+## 2. Create the backend secret
+
+Secrets are intentionally **not stored in Git**.
+
+Create the backend secret from your secure environment:
 
 ```bash
-kubectl edit deploy coredns -n kube-system -o yaml
-```
-<i> Make replica count from 2 to 4 </i>
-
-![replica 4](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/edit-coredns.png)
-
-#
-7) Navigate to frontend directory :
-```bash
-cd frontend
-```
-
-#
-8) Edit .env.docker file and change the public IP Address with your worker node public IP :
-```bash
-vi .env.docker
-```
-![IP](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/frontend.env.docker.png)
-
-#
-9) Build frontend docker image : 
-```bash
-docker build -t madhupdevops/frontend-wanderlust:v2.1.8 .
-```
-![Dockerfile frontend](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20frontend%20build.png)
-
-#
-10) Navigate to backend directory :
-```bash
-cd ../backend/
+kubectl create secret generic backend-env \
+  -n wanderlust \
+  --from-literal=MONGODB_URI='mongodb://mongo-service/wanderlust' \
+  --from-literal=REDIS_URL='redis://redis-service:6379' \
+  --from-literal=PORT='8080' \
+  --from-literal=FRONTEND_URL='http://<frontend-host>:31000' \
+  --from-literal=ACCESS_COOKIE_MAXAGE='120000' \
+  --from-literal=ACCESS_TOKEN_EXPIRES_IN='120s' \
+  --from-literal=REFRESH_COOKIE_MAXAGE='120000' \
+  --from-literal=REFRESH_TOKEN_EXPIRES_IN='120s' \
+  --from-literal=JWT_SECRET='<generate-a-new-random-secret>' \
+  --from-literal=NODE_ENV='production'
 ```
 
-#
-11) Open .env.docker file and edit below variables : 
+Never commit the real JWT secret or `.env` files.
 
-    - MONGODB_URI: \<your-mongodb-servicename>
-    - REDIS_URL: \<your-redis-servicename>
-    - FRONTEND_URL: \<your-workernode-publicIP>
-
-> Note: To get service names, check <u>mongodb.yaml, redis.yaml</u>
-
-![Backend env file](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/backend.env.docker.png)
-
-#
-12) Build backend docker image : 
-```bash
-docker build -t madhupdevops/backend-wanderlust:v2.1.8 .
-```
-![Backend dockerfile](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20backend%20build.png)
-
-#
-13) Check docker images:
-```bash
-docker images
-```
-![docker images](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20images.png)
-
-#
-14) Login to DockerHub and push image to DockerHub
-```bash
-docker login
-```
-![docker login](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20login.png)
+## 3. Deploy the manifests
 
 ```bash
-docker push madhupdevops/frontend-wanderlust:v2.1.8
-docker push madhupdevops/backend-wanderlust:v2.1.8
+kubectl apply -f persistentVolume.yaml
+kubectl apply -f persistentVolumeClaim.yaml
+kubectl apply -f mongodb.yaml
+kubectl apply -f redis.yaml
+kubectl apply -f backend.yaml
+kubectl apply -f frontend.yaml
 ```
 
-#
-15) Once, Image is pushed to DockerHub, navigate to kubernetes directory
+Or let Argo CD synchronize the `kubernetes` directory automatically.
+
+## 4. Verify
+
 ```bash
-cd ../kubernetes
+kubectl get pods -n wanderlust
+kubectl get svc -n wanderlust
+kubectl get deployments -n wanderlust
 ```
 
-#
-16) Apply manifests file the below order:
+Frontend is exposed through NodePort `31000` and backend through NodePort `31100`.
 
-    - Create persistent volume :
-    ```bash
-    kubectl apply -f persistentVolume.yaml 
-    ```
-    ![Peristent volume](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/pv.png)
+## Argo CD
 
-    - Create persistent volume Claim :
-    ```bash
-    kubectl apply -f persistentVolumeClaim.yaml 
-    ```
-    ![Peristent volume Claim](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/pvc.png)
+The Argo CD application definition is in `../argocd/application.yaml`.
 
-    - Create MongoDB deployment and service :
-    ```bash
-    kubectl apply -f mongodb.yaml 
-    ```
-    ![MongoDb](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/mongo.png)
-
-    - Create Redis deployment and service :
-    > Note: Wait for 3-4 mins to get mongodb, redis pods and service should be up, otherwise backend-service will not connect.
-    ```bash
-    kubectl apply -f redis.yaml 
-    ```
-    ![Redis](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/redis.png)
-
-    - Create Backend deployment and service :
-    ```bash
-    kubectl apply -f backend.yaml 
-    ```
-    ![Backend](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/backend.png)
-
-    - Create Frontend deployment and service :
-    ```bash
-    kubectl apply -f frontend.yaml
-    ```
-    ![Frontend](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/frontend.png)
-
-#
-17)  Check all deployments and services :
-```bash 
-kubectl get all
-```
-![all deployments and services](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/all-deps.png)
-
-18) Check logs for all the pods :
-> Note: This is mandatory to ensure all pods and services are connected or not, if not then recreate deployments
 ```bash
-kubectl logs <pod-name>
+kubectl apply -f ../argocd/application.yaml
+argocd app get wanderlust
+argocd app sync wanderlust
 ```
 
-20) Navigate to chrome and access your application at 31000 port :
-```bash
-http://<your-workernode-publicip>:31000/
-```
-![App](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/app.png)
+## Docker image updates
 
-#
-
+The CI pipeline publishes images to DockerHub. The GitOps pipeline updates `backend.yaml` and `frontend.yaml` with the new image tags, after which Argo CD synchronizes the cluster.

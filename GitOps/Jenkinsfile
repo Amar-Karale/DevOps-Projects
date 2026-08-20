@@ -3,170 +3,60 @@
 pipeline {
     agent { label 'spy' }
 
-    environment {
-        SONAR_HOME = tool "Sonar"
-    }
-
     parameters {
-        string(
-            name: 'FRONTEND_DOCKER_TAG',
-            defaultValue: '',
-            description: 'Docker image tag for frontend'
-        )
-        string(
-            name: 'BACKEND_DOCKER_TAG',
-            defaultValue: '',
-            description: 'Docker image tag for backend'
-        )
+        string(name: 'FRONTEND_DOCKER_TAG', defaultValue: '', description: 'Frontend Docker image tag')
+        string(name: 'BACKEND_DOCKER_TAG', defaultValue: '', description: 'Backend Docker image tag')
     }
 
     stages {
-
-        stage("Validate Parameters") {
+        stage('Validate Parameters') {
             steps {
                 script {
-                    if (
-                        params.FRONTEND_DOCKER_TAG?.trim() == '' ||
-                        params.BACKEND_DOCKER_TAG?.trim() == ''
-                    ) {
-                        error("FRONTEND_DOCKER_TAG and BACKEND_DOCKER_TAG must be provided.")
+                    if (!params.FRONTEND_DOCKER_TAG?.trim() || !params.BACKEND_DOCKER_TAG?.trim()) {
+                        error('FRONTEND_DOCKER_TAG and BACKEND_DOCKER_TAG must be provided.')
                     }
                 }
             }
         }
 
-        stage("Workspace Cleanup") {
-            steps {
-                cleanWs()
-            }
+        stage('Workspace Cleanup') {
+            steps { cleanWs() }
         }
 
-        stage("Git: Code Checkout") {
+        stage('Git: Code Checkout') {
             steps {
                 script {
-                    code_checkout(
-                        "https://github.com/Amar-Karale/DevOps-Projects.git",
-                        "master"
-                    )
+                    code_checkout('https://github.com/Amar-Karale/DevOps-Projects.git', 'master')
                 }
             }
         }
 
-        stage("OWASP: Dependency Check") {
+        stage('Update Kubernetes Manifests') {
             steps {
                 script {
-                    owasp_dependency()
-                }
-            }
-        }
-
-        stage("SonarQube: Code Analysis") {
-            steps {
-                script {
-                    sonarqube_analysis(
-                        "Sonar",
-                        "wanderlust",
-                        "wanderlust"
-                    )
-                }
-            }
-        }
-
-        stage("SonarQube: Code Quality Gates") {
-            steps {
-                script {
-                    sonarqube_code_quality()
-                }
-            }
-        }
-
-        stage("Exporting Environment Variables") {
-            parallel {
-
-                stage("Backend Env Setup") {
-                    steps {
-                        dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/Automations") {
-                            sh "bash updatebackendnew.sh"
-                        }
-                    }
-                }
-
-                stage("Frontend Env Setup") {
-                    steps {
-                        dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/Automations") {
-                            sh "bash updatefrontendnew.sh"
-                        }
+                    dir('kubernetes') {
+                        sh "sed -i 's|image: .*wanderlust-backend-beta:.*|image: amarkarale/wanderlust-backend-beta:${params.BACKEND_DOCKER_TAG}|' backend.yaml"
+                        sh "sed -i 's|image: .*wanderlust-frontend-beta:.*|image: amarkarale/wanderlust-frontend-beta:${params.FRONTEND_DOCKER_TAG}|' frontend.yaml"
                     }
                 }
             }
         }
 
-        stage("Docker: Build Images") {
+        stage('Git: Commit and Push') {
             steps {
                 script {
-
-                    dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/backend") {
-                        sh """
-                            docker build \
-                              -t amarkarale/wanderlust-backend-beta:${params.BACKEND_DOCKER_TAG} \
-                              .
-                        """
-                    }
-
-                    dir("DevOps-Project/DevOps-Project-40/Devops-Mega-Project-Jenkins-ArgoCD-EKS/frontend") {
-                        sh """
-                            docker build \
-                              -t amarkarale/wanderlust-frontend-beta:${params.FRONTEND_DOCKER_TAG} \
-                              .
-                        """
+                    withCredentials([gitUsernamePassword(credentialsId: 'github-cred', gitToolName: 'Default')]) {
+                        sh '''
+                            set -e
+                            git config user.name "Jenkins"
+                            git config user.email "jenkins@localhost"
+                            git add kubernetes/backend.yaml kubernetes/frontend.yaml
+                            git diff --cached --quiet || git commit -m "Update Kubernetes image tags"
+                            git push origin master
+                        '''
                     }
                 }
             }
-        }
-
-        stage("Docker: Push to DockerHub") {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'docker',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
-                    sh '''
-                        set -e
-
-                        echo "$DOCKER_PASS" | docker login                             --username "$DOCKER_USER"                             --password-stdin
-
-                        docker push "amarkarale/wanderlust-backend-beta:${BACKEND_DOCKER_TAG}"
-                        docker push "amarkarale/wanderlust-frontend-beta:${FRONTEND_DOCKER_TAG}"
-
-                        docker logout
-                    '''
-                }
-            }
-        }
-    }
-
-    post {
-        success {
-
-            archiveArtifacts(
-                artifacts: '*.xml',
-                followSymlinks: false
-            )
-
-            build job: "Wanderlust-CD",
-                parameters: [
-                    string(
-                        name: 'FRONTEND_DOCKER_TAG',
-                        value: "${params.FRONTEND_DOCKER_TAG}"
-                    ),
-                    string(
-                        name: 'BACKEND_DOCKER_TAG',
-                        value: "${params.BACKEND_DOCKER_TAG}"
-                    )
-                ]
         }
     }
 }
